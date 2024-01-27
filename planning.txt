@@ -1,0 +1,31 @@
+Step 1: Fork the Repository
+	Fork the repository into your own GitHub account.
+
+Step 2: Set Up Local Environment
+	Create venv
+	Install Python version 3.11 installed.
+	Install dependencies by running: pip install -r requirements.txt
+
+Step 3: Implement PMS_Mews Child Class
+	Implement the methods specified in the PMS_Mews class:
+	clean_webhook_payload,
+	handle_webhook,
+	update_tomorrows_stays,
+	stay_has_breakfast.
+
+Step 4: Test Webhook Functionality
+	Use Postman to make a POST request to the webhook endpoint:
+	URL: http://localhost:8000/webhook/mews/
+	Verify that the webhook methods (clean_webhook_payload and handle_webhook) are working correctly
+
+Step 5: Test update_tomorrows_stays
+	Open a Django shell: python manage.py shell
+	Manually call the update_tomorrows_stays method and ensure it updates stays that will check in tomorrow.
+
+Step 6: Test stay_has_breakfast
+	This method can be called from anywhere in the code. Test it in the Django shell or any relevant part of the code.
+	Confirm that the method returns the correct value.
+
+Step 7: Commit and Push Changes
+	Commit your changes locally.
+	Push the changes to your GitHub repository.
