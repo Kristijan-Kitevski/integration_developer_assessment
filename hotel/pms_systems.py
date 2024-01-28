@@ -7,7 +7,7 @@ from typing import Optional
 import phonenumbers
 from phonenumbers import NumberParseException
 from datetime import datetime, timedelta
-
+from .models import Language
 
 from hotel.external_api import (
 	get_reservations_between_dates,
@@ -96,7 +96,7 @@ class PMS_Mews(PMS):
 			print(f"Error decoding JSON payload: {e}")
 			return {}
 
-	@transaction.atomic
+
 	def handle_webhook(self, webhook_data: dict) -> bool:
 		hotel_id = webhook_data.get("HotelId")
 		try:
@@ -114,35 +114,8 @@ class PMS_Mews(PMS):
 				guest_id = reservation_details.get("GuestId")
 				guest_details = self.clean_webhook_payload(get_guest_details(guest_id) if guest_id else "{}")
 
-				print('reservation_details', reservation_details)
-				print('guest_details', guest_details)
-
 				with transaction.atomic():
-					# Update or create the Stay model
-					stay, _ = Stay.objects.update_or_create(
-						pms_reservation_id=reservation_id,
-						hotel=hotel,
-						defaults={
-							'pms_guest_id': reservation_details.get("GuestId"),
-							"checkin": reservation_details.get("CheckInDate"),
-							"checkout": reservation_details.get("CheckOutDate"),
-							"status": reservation_details.get("Status"),
-						}
-					)
-					# Validate phone number using phonenumbers library
-					phone_number = guest_details.get("Phone")
-					validate_phone_number(phone_number)
-					# Update or create Guest details
-					guest, _ = Guest.objects.update_or_create(
-						phone=guest_details.get("Phone"),
-						defaults={
-							"name": guest_details.get("Name"),
-						}
-					)
-					# Assign the guest to the stay
-					stay.guest = guest
-					stay.save()
-			# Return True after processing all events
+					make_transaction(reservation_details, hotel, reservation_id, guest_details)
 			return True
 
 		except APIError as api_error:
@@ -156,15 +129,6 @@ class PMS_Mews(PMS):
 			return False
 
 	def update_tomorrows_stays(self) -> bool:
-		"""
-		This method is called every day at 00:00 to update the stays checking in tomorrow.
-		Requirements:
-			- Get all stays checking in tomorrow by calling the mock API
-				get_reservations_between_dates(checkin_date, checkout_date).
-			- Update or create the Stays.
-			- Update or create Guest details. Deal with missing and incomplete data yourself
-				as you see fit. Deal with the Language yourself. country != language.
-		"""
 		try:
 			# Get the date for tomorrow
 			tomorrow = datetime.now() + timedelta(days=1)
@@ -174,55 +138,20 @@ class PMS_Mews(PMS):
 			stays_to_update = self.clean_webhook_payload(
 				get_reservations_between_dates(tomorrow_date, tomorrow_date + timedelta(days=1))
 			)
-			print('stays_to_update',stays_to_update)
 			for stay_data in stays_to_update:
 				# Extract relevant information from the stay_data
 				reservation_id = stay_data.get("ReservationId")
 				hotel_id = stay_data.get("HotelId")
 
 				if not (reservation_id and hotel_id):
-					# If required information is missing, skip this stay
 					print(f"Skipping stay with missing information: {stay_data}")
 					continue
-
-				# Use the mock API call to get reservation details
 				reservation_details = self.clean_webhook_payload(get_reservation_details(reservation_id))
-				print('reservation_details', reservation_details)
 				guest_id = reservation_details.get("GuestId")
-				print(guest_id,1111111111111)
-				# Fetch the corresponding Hotel object based on the hotel_id
 				hotel = Hotel.objects.get(pms_hotel_id=hotel_id)
+				guest_details = self.clean_webhook_payload(get_guest_details(guest_id) if guest_id else "{}")
 				with transaction.atomic():
-					# Update or create the Stay object
-					stay, _ = Stay.objects.update_or_create(
-						pms_reservation_id=reservation_id,
-						hotel=hotel,
-						defaults={
-							"status": reservation_details.get("Status"),
-							"pms_guest_id": guest_id,
-							"checkin": datetime.strptime(reservation_details.get("CheckInDate"), '%Y-%m-%d'),
-							"checkout": datetime.strptime(reservation_details.get("CheckOutDate"), '%Y-%m-%d'),
-						}
-					)
-					print(2222222222)
-					guest_details = self.clean_webhook_payload(get_guest_details(guest_id) if guest_id else "{}")
-					# Update or create Guest details
-					print(333333333333333)
-					phone_number = guest_details.get("Phone")
-					validate_phone_number(phone_number)
-					print('guest_details', guest_details)
-					guest, _ = Guest.objects.update_or_create(
-						phone = phone_number,
-						defaults={
-							"name": guest_details.get("Name"),
-						}
-					)
-					print(444444444444444)
-
-					# Assign the guest to the stay
-					stay.guest = guest
-					stay.save()
-
+					make_transaction(reservation_details, hotel, reservation_id, guest_details)
 			# Return True to indicate successful update of tomorrow's stays
 			return True
 
@@ -237,12 +166,8 @@ class PMS_Mews(PMS):
 
 	def stay_has_breakfast(self, stay: Stay) -> Optional[bool]:
 		try:
-			# Assuming you have breakfast information in get_reservation_details
 			reservation_details = self.clean_webhook_payload(get_reservation_details(stay.pms_reservation_id))
-
-			# Extract breakfast information
 			breakfast_included = reservation_details.get("BreakfastIncluded", False)
-
 			return breakfast_included
 		except Exception as e:
 			# Handle exceptions or return None if unable to determine
@@ -264,9 +189,62 @@ def get_pms(name):
 def validate_phone_number(phone_number):
 	if not phone_number:
 		raise ValueError("Missing Phone in the webhook data.")
-	# try:
-	# 	parsed_phone = phonenumbers.parse(phone_number)
-	# 	if not phonenumbers.is_valid_number(parsed_phone):
-	# 		raise ValueError("Invalid phone number format")
-	# except NumberParseException:
-	# 	raise ValueError("Invalid phone number format")
+	try:
+		parsed_phone = phonenumbers.parse(phone_number)
+		if not phonenumbers.is_valid_number(parsed_phone):
+			raise ValueError("Invalid phone number format")
+	except NumberParseException:
+		raise ValueError("Invalid phone number format")
+
+
+def make_transaction(reservation_details, hotel, reservation_id, guest_details):
+	# Update or create the Stay model
+	stay, _ = Stay.objects.update_or_create(
+		pms_reservation_id=reservation_id,
+		hotel=hotel,
+		defaults={
+			'pms_guest_id': reservation_details.get("GuestId"),
+			"checkin": reservation_details.get("CheckInDate"),
+			"checkout": reservation_details.get("CheckOutDate"),
+			"status": reservation_details.get("Status"),
+		}
+	)
+	# Validate phone number using phonenumbers library
+	phone_number = guest_details.get("Phone")
+	validate_phone_number(phone_number)
+	name = guest_details.get("Name")
+	# validate name 
+	if name is None or not name.strip():
+		raise ValueError("Guest name is missing or empty")
+	guest, _ = Guest.objects.update_or_create(
+		phone=guest_details.get("Phone"),
+		defaults={
+			"name": name,
+			"language": map_country_to_language(guest_details.get("Country")),
+		}
+	)
+	# Assign the guest to the stay
+	stay.guest = guest
+	stay.save()
+
+
+def map_country_to_language(country_code):
+	# Mapping between countries and languages
+	if not country_code:
+		return 'No country code'
+	country_code = country_code.lower()
+	country_language_mapping = {
+		"nl": Language.DUTCH,
+		"de": Language.GERMAN,
+		"en-gb": Language.BRITISH_ENGLISH,
+		"es-es": Language.SPANISH_SPAIN,
+		"fr": Language.FRENCH,
+		"it": Language.ITALIAN,
+		"pt-pt": Language.PORTUGUESE_PORTUGAL,
+		"sv": Language.SWEDISH,
+		"da": Language.DANISH,
+	}
+	for key, value in country_language_mapping.items():
+		if key in country_code:
+			return value.label
+	return 'Unknown'

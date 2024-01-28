@@ -29,3 +29,7 @@ Step 6: Test stay_has_breakfast
 Step 7: Commit and Push Changes
 	Commit your changes locally.
 	Push the changes to your GitHub repository.
+
+Step 8: Code clean up and improve
+	Clean the testing code 
+	Improve logic
